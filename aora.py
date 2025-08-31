@@ -4,8 +4,8 @@
 # - Unique amount locks, configurable unpaid-QR cleanup
 # - Multi-UPI: ranges, limits (fixed or randomized), least-used selection, MAIN fallback
 # - Timezone-aware datetimes (UTC/IST) — no utcnow() warnings
-# - Added: Force-UPI with respect flags, UPI names, per-UPI amount totals (today/yesterday/all-time) in /settings
-# - Updated: /settings shows which UPI is forced + respect flags per UPI entry and when it was set (IST)
+# - Added earlier: Force-UPI with respect flags, UPI names, per-UPI amount totals (today/yesterday/all-time) in /settings
+# - Updated now: Parser also matches "Received 800.00 Rupees From …" (amount before currency)
 
 import os, logging, time, random, re, unicodedata
 from datetime import datetime, timedelta, timezone
@@ -294,6 +294,7 @@ def pick_unique_amount(lo: float, hi: float, hard_expire_at: datetime) -> float:
 def _normalize_digits(s: str) -> str:
     out=[]
     for ch in s:
+        # drop combining marks to avoid stylized digits confusing the regex window
         if unicodedata.category(ch).startswith('M'):
             continue
         if ch.isdigit():
@@ -304,16 +305,33 @@ def _normalize_digits(s: str) -> str:
         out.append(ch)
     return "".join(out)
 
+# === Payment parser patterns ===
+# 1) Currency before amount (original styles)
 PHONEPE_RE = re.compile(
-    r"(?:received\s*rs|money\s*received|you['']ve\s*received\s*rs|credited\s*by\s*rs|paid\s*you\s*₹)\s*[.:₹\s]*([0-9][0-9,]*(?:\.[0-9]{1,2})?)",
+    r"(?:you['’]ve\s*received\s*(?:rs\.?|rupees|₹)|money\s*received|payment\s*received|upi\s*payment\s*received|credited(?:\s*by)?\s*(?:rs\.?|rupees|₹)?|received\s*(?:rs\.?|rupees|₹)|paid\s*you\s*₹)\s*[.:₹\s]*([0-9][0-9,]*(?:\.[0-9]{1,2})?)",
     re.I | re.S
 )
+# 2) Amount before currency (BharatPe style: "Received 800.00 Rupees From …")
+AMOUNT_BEFORE_CURRENCY_RE = re.compile(
+    r"(?:received|credited)\s*([0-9][0-9,]*(?:\.[0-9]{1,2})?)\s*(?:rupees|rs\.?|₹)\b",
+    re.I | re.S
+)
+# 3) GPay explicit "paid you ₹500.00" safety (some clients insert extra spaces)
+GPAY_PAID_YOU_RE = re.compile(
+    r"paid\s*you\s*[₹\s]*([0-9][0-9,]*(?:\.[0-9]{1,2})?)",
+    re.I | re.S
+)
+
 def parse_phonepe_amount(text: str):
     norm = _normalize_digits(text or "")
-    m = PHONEPE_RE.search(norm)
-    if not m: return None
-    try: return float(m.group(1).replace(",",""))
-    except: return None
+    for pat in (PHONEPE_RE, AMOUNT_BEFORE_CURRENCY_RE, GPAY_PAID_YOU_RE):
+        m = pat.search(norm)
+        if m:
+            try:
+                return float(m.group(1).replace(",", ""))
+            except:
+                pass
+    return None
 
 def force_subscribe(fn):
     def wrapper(update: Update, context: CallbackContext, *a, **k):
@@ -526,15 +544,22 @@ def deliver(ctx: CallbackContext, uid: int, item_id: str, return_ids: bool = Fal
 
     return file_msg_ids if return_ids else None
 
-# ---- Payment sniffer (PhonePe/SBI/GPay) ----
+# ---- Payment sniffer (PhonePe/SBI/GPay/Slice/BharatPe) ----
 def on_channel_post(update: Update, context: CallbackContext):
     msg = update.channel_post
     if not msg or msg.chat_id != PAYMENT_NOTIF_CHANNEL_ID:
         return
     text = msg.text or msg.caption or ""
     low = text.lower()
-    if (("phonepe business" not in low) and ("credited by rs" not in low) and ("paid you ₹" not in low)) or (("received rs" not in low and "money received" not in low and "credited by rs" not in low and "paid you ₹" not in low)):
+
+    # Broadened gate: accept common payers + phrases (GPay, Slice, BharatPe, PhonePe) and receipt keywords
+    if not any(k in low for k in (
+        "phonepe business","phonepe","gpay","google pay","slice","bharatpe",
+        "money received","payment received","upi payment received",
+        "received rs","received ₹","rupees","paid you ₹","credited"
+    )):
         return
+
     amt = parse_phonepe_amount(text)
     if amt is None:
         return
@@ -1158,7 +1183,7 @@ def upi_add__main(update: Update, context: CallbackContext):
     pool.append(entry)
     set_upi_pool(pool)
     context.user_data.clear()
-    update.message.reply_text(f"Added `{entry['upi']}`.", parse_mode=ParseMode.MARKDOWN)
+    update.message.reply_text(f"Added `{entry['upi']}`.", parseMode=ParseMode.MARKDOWN)
     return ConversationHandler.END
 
 # --- Edit flow (Name → Min → Max → Limit) ---
