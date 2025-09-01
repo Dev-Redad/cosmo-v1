@@ -1169,9 +1169,14 @@ def upi_add__limit(update: Update, context: CallbackContext):
 def upi_add__main(update: Update, context: CallbackContext):
     ans = (update.message.text or "").strip().lower()
     make_main = ans in ("y","yes","true","1")
+    # ---- FIX: guard against missing 'new_upi' to avoid KeyError ----
+    new_upi = context.user_data.get("new_upi")
+    if not new_upi:
+        update.message.reply_text("Session expired. Please run /addupi again.")
+        return ConversationHandler.END
     pool = get_upi_pool()
     entry = {
-        "upi": context.user_data["new_upi"],
+        "upi": new_upi,
         "name": None,  # name can be set later via Edit
         "min_amt": context.user_data.get("min_amt"),
         "max_amt": context.user_data.get("max_amt"),
@@ -1183,7 +1188,8 @@ def upi_add__main(update: Update, context: CallbackContext):
     pool.append(entry)
     set_upi_pool(pool)
     context.user_data.clear()
-    update.message.reply_text(f"Added `{entry['upi']}`.", parseMode=ParseMode.MARKDOWN)
+    # (also fixed param name here)
+    update.message.reply_text(f"Added `{entry['upi']}`.", parse_mode=ParseMode.MARKDOWN)
     return ConversationHandler.END
 
 # --- Edit flow (Name → Min → Max → Limit) ---
