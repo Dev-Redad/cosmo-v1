@@ -321,10 +321,15 @@ GPAY_PAID_YOU_RE = re.compile(
     r"paid\s*you\s*[₹\s]*([0-9][0-9,]*(?:\.[0-9]{1,2})?)",
     re.I | re.S
 )
+# 4) BharatPe for Business messages
+BHARATPE_BUSINESS_RE = re.compile(
+    r"BharatPe for Business.*?received.*?payment.*?₹\s*([0-9][0-9,]*(?:\.[0-9]{1,2})?)",
+    re.I | re.S
+)
 
 def parse_phonepe_amount(text: str):
     norm = _normalize_digits(text or "")
-    for pat in (PHONEPE_RE, AMOUNT_BEFORE_CURRENCY_RE, GPAY_PAID_YOU_RE):
+    for pat in (PHONEPE_RE, AMOUNT_BEFORE_CURRENCY_RE, GPAY_PAID_YOU_RE, BHARATPE_BUSINESS_RE):
         m = pat.search(norm)
         if m:
             try:
