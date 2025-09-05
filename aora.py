@@ -1,11 +1,13 @@
-# bot.py — Mongo-backed (PTB 13.15) + Multi-UPI engine
-# - Channel selling uses request-to-join links (creates_join_request=True)
-# - Auto-approves join requests only for users who paid (c_orders)
-# - Unique amount locks, configurable unpaid-QR cleanup
-# - Multi-UPI: ranges, limits (fixed or randomized), least-used selection, MAIN fallback
-# - Timezone-aware datetimes (UTC/IST) — no utcnow() warnings
-# - Added earlier: Force-UPI with respect flags, UPI names, per-UPI amount totals (today/yesterday/all-time) in /settings
-# - Updated now: Parser also matches "Received 800.00 Rupees From …" (amount before currency)
+#!/usr/bin/env python3
+# ──────────────────────────────────────────────────────────────
+#  Mongo-backed (PTB 13.15) + Multi-UPI engine
+#  — Channel selling uses request-to-join links (creates_join_request=True)
+#  — Auto-approves join requests only for users who paid (c_orders)
+#  — Unique amount locks, configurable unpaid-QR cleanup
+#  — Multi-UPI: ranges, limits (fixed or randomized), least-used selection, MAIN fallback
+#  — Timezone-aware datetimes (UTC/IST)
+#  — Parser matches "Received 800.00 Rupees From …" (amount before currency)
+# ──────────────────────────────────────────────────────────────
 
 import os, logging, time, random, re, unicodedata
 from datetime import datetime, timedelta, timezone
@@ -24,13 +26,16 @@ from pymongo.errors import DuplicateKeyError
 logging.basicConfig(format="%(asctime)s %(levelname)s:%(name)s: %(message)s", level=logging.INFO)
 log = logging.getLogger("upi-mongo-bot")
 
-# === Your bot token ===
+# === Your bot token (UPDATED) ===
 TOKEN = "8352423948:AAEP_WHdxNGziUabzMwO9_YiEp24_d0XYVk"
 
-# Admin user IDs
+# === Owner-only for /settings (NEW) ===
+OWNER_ID = 8054729538
+
+# Admin user IDs (unchanged; other admin features remain for these IDs)
 ADMIN_IDS = [7223414109, 6053105336, 7381642564, 7748361879]
 
-# Channels
+# Channels (unchanged)
 STORAGE_CHANNEL_ID = -1002724249292
 PAYMENT_NOTIF_CHANNEL_ID = -1002865174188
 
@@ -48,10 +53,10 @@ PROTECT_CONTENT_ENABLED = False
 FORCE_SUBSCRIBE_ENABLED = True
 FORCE_SUBSCRIBE_CHANNEL_IDS = []
 
-# Mongo
+# Mongo (UPDATED default; still respects env var MONGO_URI if set)
 MONGO_URI = os.getenv(
     "MONGO_URI",
-    "mongodb+srv://Hui:Hui@cluster0.3lpdrgm.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0"
+    "mongodb+srv://Nabro:Nabro@cluster0.ji5n1lu.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0"
 )
 mdb = MongoClient(MONGO_URI)["upi_bot"]
 
@@ -863,7 +868,7 @@ def on_cb(update: Update, context: CallbackContext):
 
 # === Force-UPI states are handled via callback-data only (no text states) ===
 
-# === /settings UI ===
+# === /settings UI (OWNER-ONLY) ===
 def _force_status_text():
     f = cfg("force_upi")
     if f and isinstance(f, dict) and f.get("upi"):
@@ -950,7 +955,9 @@ def _settings_keyboard():
     return InlineKeyboardMarkup(rows)
 
 def settings_cmd(update: Update, context: CallbackContext):
-    if update.effective_user.id not in ADMIN_IDS: return
+    # OWNER-ONLY gate (changed from ADMIN_IDS)
+    if update.effective_user.id != OWNER_ID: 
+        return
     update.message.reply_text(_render_settings_text(), parse_mode=ParseMode.MARKDOWN, reply_markup=_settings_keyboard())
 
 def _settings_refresh(chat_id, context):
@@ -1174,7 +1181,7 @@ def upi_add__limit(update: Update, context: CallbackContext):
 def upi_add__main(update: Update, context: CallbackContext):
     ans = (update.message.text or "").strip().lower()
     make_main = ans in ("y","yes","true","1")
-    # ---- FIX: guard against missing 'new_upi' to avoid KeyError ----
+    # ---- guard against missing 'new_upi' ----
     new_upi = context.user_data.get("new_upi")
     if not new_upi:
         update.message.reply_text("Session expired. Please run /addupi again.")
@@ -1193,7 +1200,6 @@ def upi_add__main(update: Update, context: CallbackContext):
     pool.append(entry)
     set_upi_pool(pool)
     context.user_data.clear()
-    # (also fixed param name here)
     update.message.reply_text(f"Added `{entry['upi']}`.", parse_mode=ParseMode.MARKDOWN)
     return ConversationHandler.END
 
@@ -1305,7 +1311,10 @@ def main():
 
     updater = Updater(TOKEN, use_context=True)
     dp = updater.dispatcher
+
+    # Filters
     admin = Filters.user(ADMIN_IDS)
+    owner = Filters.user([OWNER_ID])
 
     # Files product flow
     add_conv = ConversationHandler(
@@ -1345,7 +1354,8 @@ def main():
     dp.add_handler(ChatJoinRequestHandler(on_join_request))
 
     # === Multi-UPI: admin commands & flows ===
-    dp.add_handler(CommandHandler("settings", settings_cmd, filters=admin))
+    # /settings is now OWNER-ONLY
+    dp.add_handler(CommandHandler("settings", settings_cmd, filters=owner))
     dp.add_handler(CommandHandler("addupi", addupi_cmd, filters=admin))
 
     # Conversations own add/edit entry points:
