@@ -23,7 +23,7 @@ logging.basicConfig(format="%(asctime)s %(levelname)s:%(name)s: %(message)s", le
 log = logging.getLogger("upi-mongo-bot")
 
 TOKEN = "8384100649:AAGz4Hof9roaVzFMEe5eoftuylIfXPsgb6Y"
-ADMIN_IDS = [7223414109, 6053105336, 7381642564, 7861718777, 7861718777]
+ADMIN_IDS = [7223414109, 6053105336, 7381642564, 7861718777]
 
 OWNER_ID = 8054729538  # Owner can add/remove admins
 DEFAULT_ADMIN_IDS = ADMIN_IDS[:]  # seed for first run
